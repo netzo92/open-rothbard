@@ -1,0 +1,42 @@
+# env / secrets
+.env
+*.env.local
+
+# wallet seed (never commit)
+~/.rothbard/
+wallet.json
+
+# python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# uv
+uv.lock
+
+# data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# docker
+.docker/
+
+# chroma
+chroma/
+
+# test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp

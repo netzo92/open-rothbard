@@ -1,0 +1,18 @@
+# Ephemeral worker — executes a single task and exits
+# Task is passed via TASK_JSON environment variable
+# Result is written as JSON to stdout on exit
+
+FROM python:3.12-slim
+
+WORKDIR /worker
+
+# Install minimal dependencies for worker tasks
+RUN pip install --no-cache-dir anthropic httpx
+
+# Worker entrypoint script
+COPY worker_entrypoint.py .
+
+ENV TASK_JSON=""
+ENV ANTHROPIC_API_KEY=""
+
+CMD ["python", "worker_entrypoint.py"]

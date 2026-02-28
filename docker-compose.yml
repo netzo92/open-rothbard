@@ -1,0 +1,45 @@
+services:
+  rothbard-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_started
+    volumes:
+      - wallet-data:/root/.rothbard
+      - sqlite-data:/data
+      # Mount Docker socket so agent can spawn worker containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8402:8402"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+
+  chroma:
+    image: chromadb/chroma:latest
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+    volumes:
+      - chroma-data:/chroma/chroma
+    ports:
+      - "8000:8000"
+
+volumes:
+  wallet-data:
+  sqlite-data:
+  redis-data:
+  chroma-data:
