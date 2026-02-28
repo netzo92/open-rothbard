@@ -30,8 +30,11 @@ class Settings(BaseSettings):
     max_infra_spend_pct: float = 0.10
     profit_reinvest_pct: float = 0.70
     log_level: str = "INFO"
-    # Require human approval before every real-world action (sends, containers, trades)
-    audit_mode: bool = False
+    # Require human approval before every real-world action (sends, containers, trades).
+    # Defaults to True for safety; set to False only in trusted automated environments.
+    audit_mode: bool = True
+    # Hard cap per individual transaction — guards against exfiltration attempts.
+    max_single_transfer_usdc: Decimal = Decimal("100")
 
     # ── Infrastructure ────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379"

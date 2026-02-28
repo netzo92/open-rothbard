@@ -8,12 +8,15 @@ from within the core container itself.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
+
+from rothbard.core.audit import AuditAction, AuditDenied, require_approval
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,7 @@ class DockerManager:
                 raise
         return self._client
 
-    def spawn_worker(
+    async def spawn_worker(
         self,
         task: WorkerTask,
         image: str = DEFAULT_WORKER_IMAGE,
@@ -64,6 +67,20 @@ class DockerManager:
         mem_limit: str = "256m",
     ) -> str:
         """Spawn a worker container. Returns container ID."""
+        await require_approval(AuditAction(
+            action_type="container",
+            title=f"Spawn worker container: {task.strategy}",
+            details={
+                "task_id": task.task_id,
+                "strategy": task.strategy,
+                "image": image,
+                "cpu_limit": cpu_limit,
+                "mem_limit": mem_limit,
+                "budget_usdc": str(task.budget_usdc),
+            },
+            risk="low",
+        ))
+
         client = self._get_client()
 
         env = {

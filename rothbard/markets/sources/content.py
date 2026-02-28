@@ -13,6 +13,7 @@ from typing import Sequence
 
 import httpx
 
+from rothbard.core.scrub import scrub
 from rothbard.markets.sources.base import MarketSource, Opportunity, StrategyType
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ class ContentSource(MarketSource):
 
             root = ET.fromstring(resp.text)
             titles = [
-                (item.findtext("title") or "").strip()
+                scrub((item.findtext("title") or "").strip(), max_length=80)
                 for item in root.findall(".//item")
             ]
             return [t for t in titles if t][:10]

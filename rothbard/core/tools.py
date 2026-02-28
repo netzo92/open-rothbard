@@ -6,11 +6,16 @@ to gather information before making a decision.
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 from langchain_core.tools import tool
 
+from rothbard.core.scrub import scrub
+
 logger = logging.getLogger(__name__)
+
+_HTML_TAG_RE = re.compile(r"<[^>]{0,200}>")
 
 
 @tool
@@ -20,8 +25,10 @@ async def fetch_url(url: str) -> str:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            # Return first 4000 chars to stay within context
-            return resp.text[:4000]
+            # Strip HTML tags then sanitize before returning to LLM
+            raw = resp.text[:8000]
+            plain = _HTML_TAG_RE.sub(" ", raw)
+            return scrub(plain, max_length=4000)
     except Exception as exc:
         return f"Error fetching {url}: {exc}"
 

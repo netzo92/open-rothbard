@@ -18,6 +18,7 @@ from typing import Sequence
 
 import httpx
 
+from rothbard.core.scrub import scrub
 from rothbard.markets.sources.base import MarketSource, Opportunity, StrategyType
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,8 @@ class UpworkSource(MarketSource):
 
     def _item_to_opportunity(self, item: ET.Element) -> Opportunity | None:
         try:
-            title = (item.findtext("title") or "").strip()
-            desc = (item.findtext("description") or "").strip()
+            title = scrub((item.findtext("title") or "").strip(), max_length=120)
+            desc  = scrub((item.findtext("description") or "").strip(), max_length=400)
             link = (item.findtext("link") or "").strip()
             combined = (title + " " + desc).lower()
 
@@ -86,8 +87,8 @@ class UpworkSource(MarketSource):
             return Opportunity(
                 id=f"upwork:{uid}",
                 strategy_type=StrategyType.FREELANCE,
-                title=title[:120],
-                description=desc[:500],
+                title=title,
+                description=desc,
                 expected_revenue_usdc=estimated_revenue,
                 estimated_cost_usdc=Decimal("0.50"),  # worker container cost
                 effort_score=6.0,

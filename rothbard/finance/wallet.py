@@ -8,16 +8,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rothbard.config import settings
+from rothbard.core.audit import AuditAction, AuditDenied, require_approval
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+_EVM_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 
 class Wallet:
@@ -94,6 +98,27 @@ class Wallet:
         """Transfer assets. Returns transaction hash."""
         if self._wallet is None:
             raise RuntimeError("Wallet not connected")
+
+        if not _EVM_ADDR_RE.match(to):
+            raise ValueError(f"Invalid EVM destination address: {to!r}")
+
+        cap = settings.max_single_transfer_usdc
+        if amount > cap:
+            raise ValueError(f"Transfer amount {amount} exceeds single-transaction cap {cap}")
+
+        await require_approval(AuditAction(
+            action_type="transaction",
+            title=f"Send {amount} {asset_id.upper()} on Base",
+            details={
+                "from": self.address,
+                "to": to,
+                "amount": str(amount),
+                "asset": asset_id.upper(),
+                "network": settings.network_id,
+            },
+            risk="high",
+        ))
+
         transfer = self._wallet.transfer(float(amount), asset_id, to)
         transfer.wait()
         logger.info("Sent %s %s to %s | tx: %s", amount, asset_id, to, transfer.transaction_hash)

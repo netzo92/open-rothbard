@@ -14,12 +14,17 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from decimal import Decimal
 from pathlib import Path
 
 from rothbard.config import settings
+from rothbard.core.audit import AuditAction, require_approval
 
 logger = logging.getLogger(__name__)
+
+# Base58 alphabet excludes 0, O, I, l to avoid visual confusion
+_SOL_ADDR_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 # USDC mint addresses
 USDC_MINT_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -150,6 +155,23 @@ class SolanaWallet:
         """Transfer SOL. Returns transaction signature."""
         if not self.is_connected:
             raise RuntimeError("Solana wallet not connected")
+
+        if not _SOL_ADDR_RE.match(to):
+            raise ValueError(f"Invalid Solana destination address: {to!r}")
+
+        await require_approval(AuditAction(
+            action_type="transaction",
+            title=f"Send {amount_sol} SOL on Solana",
+            details={
+                "from": self.address,
+                "to": to,
+                "amount": str(amount_sol),
+                "asset": "SOL",
+                "rpc": settings.solana_rpc_url,
+            },
+            risk="high",
+        ))
+
         try:
             from solders.pubkey import Pubkey  # type: ignore[import]
             from solders.system_program import TransferParams, transfer  # type: ignore[import]
@@ -174,6 +196,28 @@ class SolanaWallet:
         """Transfer USDC (SPL token). Returns transaction signature."""
         if not self.is_connected:
             raise RuntimeError("Solana wallet not connected")
+
+        if not _SOL_ADDR_RE.match(to):
+            raise ValueError(f"Invalid Solana destination address: {to!r}")
+
+        cap = settings.max_single_transfer_usdc
+        if amount > cap:
+            raise ValueError(f"Transfer amount {amount} exceeds single-transaction cap {cap}")
+
+        await require_approval(AuditAction(
+            action_type="transaction",
+            title=f"Send {amount} USDC on Solana",
+            details={
+                "from": self.address,
+                "to": to,
+                "amount": str(amount),
+                "asset": "USDC (SPL)",
+                "mint": _usdc_mint(),
+                "rpc": settings.solana_rpc_url,
+            },
+            risk="high",
+        ))
+
         try:
             from solders.pubkey import Pubkey  # type: ignore[import]
             from spl.token.async_client import AsyncToken  # type: ignore[import]
