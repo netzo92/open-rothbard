@@ -26,6 +26,9 @@ dependencies = [
     "apscheduler>=3.10",
     "python-dotenv>=1.0",
     "rich>=13",
+    # Solana
+    "solders>=0.21",
+    "solana>=0.35",
 ]
 
 [tool.uv]

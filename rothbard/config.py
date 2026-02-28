@@ -38,11 +38,17 @@ class Settings(BaseSettings):
     sqlite_path: Path = Path("./data/rothbard.db")
     wallet_path: Path = Path("~/.rothbard/wallet.json")
 
+    # ── Solana ────────────────────────────────────────────────────────────────
+    # mainnet-beta RPC: https://api.mainnet-beta.solana.com
+    # devnet RPC:       https://api.devnet.solana.com
+    solana_rpc_url: str = "https://api.devnet.solana.com"
+    solana_keypair_path: Path = Path("~/.rothbard/solana_keypair.json")
+
     # ── x402 ─────────────────────────────────────────────────────────────────
     x402_port: int = 8402
     x402_price_usdc: Decimal = Decimal("0.01")
 
-    @field_validator("wallet_path", mode="before")
+    @field_validator("wallet_path", "solana_keypair_path", mode="before")
     @classmethod
     def expand_wallet_path(cls, v: str | Path) -> Path:
         return Path(v).expanduser()
