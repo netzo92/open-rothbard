@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     max_infra_spend_pct: float = 0.10
     profit_reinvest_pct: float = 0.70
     log_level: str = "INFO"
+    # Require human approval before every real-world action (sends, containers, trades)
+    audit_mode: bool = False
 
     # ── Infrastructure ────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379"

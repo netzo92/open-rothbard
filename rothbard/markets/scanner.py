@@ -11,6 +11,7 @@ from rothbard.markets.sources.base import Opportunity
 from rothbard.markets.sources.content import ContentSource
 from rothbard.markets.sources.defi import DeFiYieldSource
 from rothbard.markets.sources.freelance import UpworkSource
+from rothbard.markets.sources.solana_defi import SolanaDeFiSource
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class OpportunityScanner:
     def __init__(self) -> None:
         self.sources = [
             DeFiYieldSource(),
+            SolanaDeFiSource(),
             UpworkSource(),
             ArbitrageSource(),
             ContentSource(),

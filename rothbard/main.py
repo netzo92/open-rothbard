@@ -3,9 +3,10 @@
 Wires together all subsystems and starts:
   1. SQLite episodic memory DB
   2. ChromaDB semantic memory
-  3. CDP wallet
-  4. FastAPI x402 payment server (background)
-  5. The LangGraph agent loop
+  3. CDP wallet (Base/EVM)
+  4. Solana wallet
+  5. FastAPI x402 payment server (background)
+  6. The LangGraph agent loop
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from rothbard.config import settings
 from rothbard.core import nodes as core_nodes
 from rothbard.core.agent import RothbardAgent
 from rothbard.finance.treasury import Treasury
+from rothbard.finance.solana_wallet import SolanaWallet
 from rothbard.finance.wallet import Wallet
 from rothbard.finance.x402 import router as x402_router
 from rothbard.markets.scanner import OpportunityScanner
@@ -66,11 +68,12 @@ async def health():
 # ── startup ───────────────────────────────────────────────────────────────────
 
 
-async def startup() -> tuple[Wallet, Treasury, OpportunityScanner]:
+async def startup() -> tuple[Wallet, SolanaWallet, Treasury, OpportunityScanner]:
     logger.info("=" * 60)
     logger.info("  open-rothbard v0.1.0")
-    logger.info("  Network: %s", settings.network_id)
-    logger.info("  Scan interval: %d min", settings.scan_interval_minutes)
+    logger.info("  EVM network:    %s", settings.network_id)
+    logger.info("  Solana RPC:     %s", settings.solana_rpc_url)
+    logger.info("  Scan interval:  %d min", settings.scan_interval_minutes)
     logger.info("=" * 60)
 
     # 1. Episodic memory (SQLite)
@@ -79,34 +82,49 @@ async def startup() -> tuple[Wallet, Treasury, OpportunityScanner]:
     # 2. Semantic memory (ChromaDB)
     await semantic.init_semantic(settings.chroma_host, settings.chroma_port)
 
-    # 3. Wallet
+    # 3. EVM wallet (Base via CDP)
     wallet = Wallet()
     await wallet.connect()
-    logger.info("Wallet address: %s", wallet.address)
+    logger.info("EVM wallet:    %s", wallet.address)
 
-    # 4. Testnet faucet on first run (dev convenience)
+    # 4. Testnet faucet for EVM on first run
     if settings.is_testnet:
         balance = await wallet.get_balance()
         if balance == 0:
-            logger.info("Zero balance on testnet — requesting faucet funds")
+            logger.info("Zero EVM balance — requesting faucet funds")
             try:
                 await wallet.fund_from_faucet()
             except Exception as exc:
-                logger.warning("Faucet failed (may already be funded): %s", exc)
+                logger.warning("EVM faucet failed: %s", exc)
 
-    # 5. Treasury
+    # 5. Solana wallet
+    sol_wallet = SolanaWallet()
+    await sol_wallet.connect()
+    logger.info("Solana wallet: %s", sol_wallet.address)
+
+    # Devnet airdrop on first run if balance is zero
+    if "devnet" in settings.solana_rpc_url and sol_wallet.is_connected:
+        sol_balance = await sol_wallet.get_sol_balance()
+        if sol_balance == 0:
+            logger.info("Zero SOL balance — requesting devnet airdrop")
+            try:
+                await sol_wallet.request_airdrop(sol_amount=1.0)
+            except Exception as exc:
+                logger.warning("Solana airdrop failed: %s", exc)
+
+    # 6. Treasury
     treasury = Treasury()
 
-    # 6. Market scanner
+    # 7. Market scanner (includes SolanaDeFiSource)
     scanner = OpportunityScanner()
 
-    # 7. Revenue strategy plugins
+    # 8. Revenue strategy plugins
     _load_all()
 
-    # 8. Inject singletons into nodes module
+    # 9. Inject singletons into nodes module
     core_nodes.setup(wallet=wallet, treasury=treasury, scanner=scanner)
 
-    return wallet, treasury, scanner
+    return wallet, sol_wallet, treasury, scanner
 
 
 async def run_agent() -> None:
@@ -128,7 +146,7 @@ async def run_server() -> None:
 
 
 async def main() -> None:
-    _, __, ___ = await startup()
+    _, sol_wallet, __, ___ = await startup()
 
     # Run agent loop and HTTP server concurrently
     tasks = [
@@ -148,6 +166,7 @@ async def main() -> None:
     finally:
         for task in tasks:
             task.cancel()
+        await sol_wallet.close()
         logger.info("Goodbye.")
 
 
