@@ -19,6 +19,7 @@ from rothbard.core.state import AgentState
 from rothbard.finance.treasury import LedgerCategory, Treasury
 from rothbard.finance.wallet import Wallet
 from rothbard.markets.scanner import OpportunityScanner
+from rothbard.markets.scorer import score as _score
 from rothbard.memory import episodic, semantic
 from rothbard.revenue.registry import get_all_strategies
 
@@ -162,19 +163,53 @@ async def select_strategy(state: AgentState) -> dict:
     logger.info("[cycle %d] Strategy selected: %s | %s", cycle, chosen, reasoning)
 
     # Find the selected opportunity object
+    all_opps = state.get("opportunities", [])
     selected_opp = None
     if opp_id:
-        selected_opp = next((o for o in opps if o.id == opp_id), None)
-    if not selected_opp and opps and chosen != "wait":
+        selected_opp = next((o for o in all_opps if o.id == opp_id), None)
+    if not selected_opp and all_opps and chosen != "wait":
         # Fall back to top opportunity of the chosen type
         selected_opp = next(
-            (o for o in opps if o.strategy_type == chosen), opps[0] if opps else None
+            (o for o in all_opps if o.strategy_type == chosen), all_opps[0] if all_opps else None
         )
+
+    # Build per-opportunity decisions for the dashboard
+    best_score = _score(selected_opp) if selected_opp else 0.0
+    decisions = []
+    for o in all_opps[:30]:  # cap display at 30
+        s = _score(o)
+        is_selected = selected_opp and o.id == selected_opp.id
+        if is_selected:
+            status, reason = "selected", "Chosen by LLM"
+        elif chosen == "wait":
+            status = "wait"
+            reason = f"LLM chose wait — {reasoning[:100]}"
+        elif balance < o.estimated_cost_usdc:
+            status = "skipped"
+            reason = f"Insufficient capital (need ${float(o.estimated_cost_usdc):.2f}, have ${float(balance):.2f})"
+        else:
+            status = "skipped"
+            reason = f"Lower score ({s:.3f} vs selected {best_score:.3f})"
+        decisions.append({
+            "id": o.id,
+            "title": o.title,
+            "type": str(o.strategy_type),
+            "score": round(s, 4),
+            "roi": round(float(o.expected_roi), 2),
+            "risk": o.risk_score,
+            "cost": float(o.estimated_cost_usdc),
+            "status": status,
+            "reason": reason,
+        })
+
+    # Push live data to dashboard
+    from rothbard.dashboard import update_live
+    update_live(selection_reasoning=reasoning, opportunity_decisions=decisions)
 
     return {
         "selected_strategy": chosen,
         "opportunities": ([selected_opp] if selected_opp else []),
-        "messages": [system, human, response],
+        "messages": [system, human],
         "last_action": f"Selected strategy: {chosen} — {reasoning}",
     }
 

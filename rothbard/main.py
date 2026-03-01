@@ -126,6 +126,16 @@ async def startup() -> tuple[Wallet, SolanaWallet, Treasury, OpportunityScanner]
     # 9. Inject singletons into nodes module
     core_nodes.setup(wallet=wallet, treasury=treasury, scanner=scanner)
 
+    # 10. Push wallet addresses + network to dashboard live state
+    from rothbard.dashboard import update_live
+    sol_network = "devnet" if "devnet" in settings.solana_rpc_url else "mainnet-beta"
+    update_live(
+        evm_address=wallet.address,
+        evm_network=settings.network_id,
+        sol_address=sol_wallet.address,
+        sol_network=sol_network,
+    )
+
     return wallet, sol_wallet, treasury, scanner
 
 

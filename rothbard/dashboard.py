@@ -16,6 +16,14 @@ from rothbard.memory import episodic
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
+# In-memory snapshot updated by node functions each cycle
+_live: dict[str, Any] = {}
+
+
+def update_live(**kwargs: Any) -> None:
+    """Called by graph nodes to push live state into the dashboard."""
+    _live.update(kwargs)
+
 _HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -122,6 +130,53 @@ _HTML = """<!DOCTYPE html>
     .strategy { color: var(--accent-dim); }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
+    .wallet-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      flex: 1;
+      min-width: 0;
+    }
+    .wallet-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+    .wallet-network { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; margin-left: 6px; }
+    .wallet-network.mainnet { background: rgba(239,68,68,.2); color: var(--red); }
+    .wallet-network.testnet { background: rgba(34,197,94,.15); color: var(--accent); }
+    .wallet-addr {
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 10px;
+      margin-top: 8px;
+      word-break: break-all;
+      width: 100%;
+      display: block;
+    }
+    .wallet-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+    .copy-btn {
+      background: rgba(34,197,94,.1);
+      border: 1px solid rgba(34,197,94,.3);
+      color: var(--accent);
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 11px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: rgba(34,197,94,.2); }
+    .copy-btn.copied { color: var(--muted); border-color: var(--border); }
+    .network-banner {
+      padding: 10px 16px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .network-banner.mainnet { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.4); color: var(--red); }
+    .network-banner.testnet { background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.2); color: var(--accent); }
     #error-banner {
       display: none;
       background: rgba(239,68,68,.1);
@@ -182,6 +237,26 @@ _HTML = """<!DOCTYPE html>
         </tr>
       </thead>
       <tbody id="prs-body"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Current Opportunities</h2>
+    <div id="selection-reasoning" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:10px;color:var(--muted);font-size:12px;"></div>
+    <table id="opps-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Title</th>
+          <th>Score</th>
+          <th>ROI</th>
+          <th>Risk</th>
+          <th>Cost</th>
+          <th>Status</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody id="opps-body"><tr><td colspan="8" class="empty">Waiting for first scan…</td></tr></tbody>
     </table>
   </section>
 
@@ -283,6 +358,33 @@ _HTML = """<!DOCTYPE html>
         `).join('');
       }
 
+      // Opportunities
+      const reasoningEl = document.getElementById('selection-reasoning');
+      if (d.selection_reasoning) {
+        reasoningEl.style.display = 'block';
+        reasoningEl.textContent = '⚖ LLM reasoning: ' + d.selection_reasoning;
+      } else {
+        reasoningEl.style.display = 'none';
+      }
+      const oppsBody = document.getElementById('opps-body');
+      if (!d.opportunity_decisions || d.opportunity_decisions.length === 0) {
+        oppsBody.innerHTML = '<tr><td colspan="8" class="empty">No opportunities in last scan.</td></tr>';
+      } else {
+        oppsBody.innerHTML = d.opportunity_decisions.map(o => {
+          const statusColor = o.status === 'selected' ? 'green' : o.status === 'wait' ? 'grey' : 'yellow';
+          return `<tr>
+            <td>${badge(o.type, 'grey')}</td>
+            <td title="${o.title}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.title}</td>
+            <td>${o.score.toFixed(3)}</td>
+            <td>$${o.roi.toFixed(2)}</td>
+            <td>${o.risk}/10</td>
+            <td>$${o.cost.toFixed(2)}</td>
+            <td>${badge(o.status, statusColor)}</td>
+            <td title="${o.reason}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);">${o.reason}</td>
+          </tr>`;
+        }).join('');
+      }
+
       // Ledger
       const ledgerBody = document.getElementById('ledger-body');
       if (!d.recent_ledger || d.recent_ledger.length === 0) {
@@ -352,6 +454,9 @@ async def stats() -> dict[str, Any]:
         "bounties_owed_usdc": str(owed),
         "open_pr_count": len(open_prs),
         "last_strategy": last_ep.strategy if last_ep else None,
+        # live state pushed by nodes each cycle
+        "selection_reasoning": _live.get("selection_reasoning"),
+        "opportunity_decisions": _live.get("opportunity_decisions", []),
         "recent_episodes": [
             {
                 "cycle": ep.cycle,
