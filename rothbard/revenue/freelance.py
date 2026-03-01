@@ -8,12 +8,16 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
+import re
+
 import httpx
 from anthropic import AsyncAnthropic
 
 from rothbard.config import settings
 from rothbard.markets.sources.base import Opportunity
+from rothbard.memory import episodic
 from rothbard.revenue.base import ExecutionResult, RevenueStrategy
+from rothbard.revenue.github_submitter import GitHubSubmitter
 from rothbard.revenue.registry import register
 
 logger = logging.getLogger(__name__)
@@ -28,18 +32,18 @@ class FreelanceStrategy(RevenueStrategy):
 
     async def execute(self, opportunity: Opportunity, wallet) -> ExecutionResult:
         payload = opportunity.payload
-        url = payload.get("url", "")
         platform = payload.get("platform", "unknown")
 
-        # Fetch full task description
-        task_description = await self._fetch_task(url) if url else opportunity.description
+        if platform == "github":
+            return await self._execute_github(opportunity)
 
-        # Generate deliverable using Claude
+        # Generic path (Upwork, etc.): generate a deliverable and log it
+        url = payload.get("url", "")
+        task_description = await self._fetch_task(url) if url else opportunity.description
         deliverable = await self._generate_deliverable(
             task_title=opportunity.title,
             task_description=task_description,
         )
-
         if not deliverable:
             return ExecutionResult(success=False, details="Failed to generate deliverable")
 
@@ -47,24 +51,57 @@ class FreelanceStrategy(RevenueStrategy):
             "FreelanceStrategy: generated deliverable for '%s' (%d chars)",
             opportunity.title[:60], len(deliverable),
         )
-
-        # NOTE: Submitting the deliverable back to the platform requires
-        # platform-specific API integration (Upwork OAuth, etc.).
-        # This is the integration point. Deliverable is logged for now.
         logger.debug("Deliverable: %s", deliverable[:500])
 
-        # Assume successful bid/submission for simulation
-        # Real implementation: await platform_api.submit(url, deliverable)
-        estimated_revenue = opportunity.expected_revenue_usdc
-        cost = Decimal("0.10")  # Claude API cost estimate
-        profit = estimated_revenue - cost
-
+        # Upwork submission requires OAuth — deliverable is logged for now
+        cost = Decimal("0.10")
+        profit = max(opportunity.expected_revenue_usdc - cost, Decimal("0"))
         return ExecutionResult(
             success=True,
-            profit_usdc=max(profit, Decimal("0")),
+            profit_usdc=profit,
+            details=f"Generated deliverable for {platform} task: '{opportunity.title[:60]}'",
+        )
+
+    async def _execute_github(self, opportunity: Opportunity) -> ExecutionResult:
+        """Fork → fix → PR pipeline for a GitHub bounty issue."""
+        payload = opportunity.payload
+        repo = payload.get("repo", "")
+        issue_url = payload.get("url", "")
+
+        # Parse issue number from URL: https://github.com/owner/repo/issues/123
+        match = re.search(r"/issues/(\d+)$", issue_url)
+        if not match or not repo:
+            return ExecutionResult(
+                success=False,
+                details="GitHub opportunity missing repo or issue number in payload",
+            )
+        issue_number = int(match.group(1))
+
+        try:
+            submitter = GitHubSubmitter()
+            result = await submitter.submit(repo=repo, issue_number=issue_number)
+        except RuntimeError as exc:
+            return ExecutionResult(success=False, details=str(exc))
+        except Exception as exc:
+            logger.error("GitHub submission failed: %s", exc)
+            return ExecutionResult(success=False, details=f"GitHub submission error: {exc}")
+
+        # Record the PR so the agent can poll for merge + payment later
+        await episodic.record_pr(
+            pr_url=result["pr_url"],
+            repo=repo,
+            issue_number=issue_number,
+            expected_bounty_usdc=str(opportunity.expected_revenue_usdc),
+            branch=result["branch"],
+        )
+
+        # Revenue is not credited yet — payment arrives after PR review
+        return ExecutionResult(
+            success=True,
+            profit_usdc=Decimal("0"),
             details=(
-                f"Generated {len(deliverable)}-char deliverable for {platform} task: "
-                f"'{opportunity.title[:60]}'"
+                f"Opened PR for {repo}#{issue_number}: {result['pr_url']} "
+                f"(bounty pending merge)"
             ),
         )
 

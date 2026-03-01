@@ -53,10 +53,43 @@ def setup(wallet: Wallet, treasury: Treasury, scanner: OpportunityScanner) -> No
 
 
 async def check_treasury(state: AgentState) -> dict:
-    """Fetch current wallet balance and update state."""
+    """Fetch current wallet balance and poll open GitHub PRs for merge status."""
     balance = await _wallet.get_balance() if _wallet else Decimal("0")
     logger.info("[cycle %d] Treasury: %s USDC", state["cycle"], balance)
+
+    # Poll pending GitHub PRs — update status only, no phantom income
+    await _poll_pending_prs()
+
     return {"treasury_balance": balance}
+
+
+async def _poll_pending_prs() -> None:
+    """Check each open PR and update its status.
+
+    We do NOT credit income here — real USDC arrives on-chain and will be
+    picked up naturally by wallet.get_balance() on the next cycle.
+    Merged PRs are logged and marked so the dashboard can show them, and
+    the expected bounty remains tracked in pending_prs for attribution.
+    """
+    from rothbard.memory import episodic
+    from rothbard.revenue.github_submitter import check_pr_status
+
+    try:
+        open_prs = await episodic.get_open_prs()
+    except Exception:
+        return  # DB not ready yet
+
+    for pr in open_prs:
+        status = await check_pr_status(pr.pr_url)
+        if status == "merged":
+            logger.info(
+                "PR merged: %s — awaiting on-chain payment of %.2f USDC",
+                pr.pr_url, float(pr.expected_bounty_usdc),
+            )
+            await episodic.mark_pr_status(pr.pr_url, "merged")
+        elif status == "closed":
+            logger.info("PR closed without merge: %s", pr.pr_url)
+            await episodic.mark_pr_status(pr.pr_url, "closed")
 
 
 async def scan_markets(state: AgentState) -> dict:

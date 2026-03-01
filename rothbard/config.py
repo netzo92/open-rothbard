@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     max_infra_spend_pct: float = 0.10
     profit_reinvest_pct: float = 0.70
     log_level: str = "INFO"
+    # Comma-separated strategy types to surface. Empty string = all strategies.
+    # Example: STRATEGY_FOCUS=trade,arbitrage  (web3 only)
+    strategy_focus: str = ""
     # Require human approval before every real-world action (sends, containers, trades).
     # Defaults to True for safety; set to False only in trusted automated environments.
     audit_mode: bool = True
@@ -49,6 +52,10 @@ class Settings(BaseSettings):
     solana_rpc_url: str = "https://api.devnet.solana.com"
     solana_keypair_path: Path = Path("~/.rothbard/solana_keypair.json")
 
+    # ── GitHub ───────────────────────────────────────────────────────────────
+    # Optional — without a token you get 10 search req/min; with one, 30 req/min
+    github_token: str = ""
+
     # ── x402 ─────────────────────────────────────────────────────────────────
     x402_port: int = 8402
     x402_price_usdc: Decimal = Decimal("0.01")
@@ -62,6 +69,13 @@ class Settings(BaseSettings):
     @classmethod
     def expand_sqlite_path(cls, v: str | Path) -> Path:
         return Path(v).expanduser()
+
+    @property
+    def focused_strategy_types(self) -> set[str]:
+        """Parsed set of allowed strategy types, or empty set meaning 'all'."""
+        if not self.strategy_focus:
+            return set()
+        return {s.strip().lower() for s in self.strategy_focus.split(",") if s.strip()}
 
     @property
     def chroma_url(self) -> str:

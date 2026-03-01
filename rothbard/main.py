@@ -26,6 +26,7 @@ from rothbard.core.agent import RothbardAgent
 from rothbard.finance.treasury import Treasury
 from rothbard.finance.solana_wallet import SolanaWallet
 from rothbard.finance.wallet import Wallet
+from rothbard.dashboard import router as dashboard_router
 from rothbard.finance.x402 import router as x402_router
 from rothbard.markets.scanner import OpportunityScanner
 from rothbard.memory import episodic, semantic
@@ -58,6 +59,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(x402_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/health")

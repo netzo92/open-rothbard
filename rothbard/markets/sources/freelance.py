@@ -42,9 +42,17 @@ class UpworkSource(MarketSource):
     name = "upwork"
 
     async def scan(self) -> Sequence[Opportunity]:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        }
         try:
             async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                resp = await client.get(UPWORK_RSS_URL)
+                resp = await client.get(UPWORK_RSS_URL, headers=headers)
                 resp.raise_for_status()
         except Exception as exc:
             logger.warning("Upwork RSS fetch failed: %s", exc)

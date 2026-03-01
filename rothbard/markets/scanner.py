@@ -5,12 +5,14 @@ import asyncio
 import logging
 from typing import Sequence
 
+from rothbard.config import settings
 from rothbard.markets.scorer import filter_by_capital, rank
 from rothbard.markets.sources.arbitrage import ArbitrageSource
 from rothbard.markets.sources.base import Opportunity
 from rothbard.markets.sources.content import ContentSource
 from rothbard.markets.sources.defi import DeFiYieldSource
 from rothbard.markets.sources.freelance import UpworkSource
+from rothbard.markets.sources.github_bounties import GitHubBountiesSource
 from rothbard.markets.sources.solana_defi import SolanaDeFiSource
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,7 @@ class OpportunityScanner:
             DeFiYieldSource(),
             SolanaDeFiSource(),
             UpworkSource(),
+            GitHubBountiesSource(),
             ArbitrageSource(),
             ContentSource(),
         ]
@@ -40,6 +43,11 @@ class OpportunityScanner:
 
         if available_usdc is not None:
             all_opps = filter_by_capital(all_opps, available_usdc)
+
+        focus = settings.focused_strategy_types
+        if focus:
+            all_opps = [o for o in all_opps if str(o.strategy_type) in focus]
+            logger.info("Strategy focus active: %s", focus)
 
         ranked = rank(all_opps)
         logger.info("Scanner found %d total opportunities, ranked", len(ranked))

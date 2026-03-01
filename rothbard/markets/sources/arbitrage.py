@@ -20,11 +20,19 @@ logger = logging.getLogger(__name__)
 MIN_GAP_PCT = 0.5
 # Coinbase public price API (no auth required)
 CB_PRICE_URL = "https://api.coinbase.com/v2/prices/{pair}/spot"
-# Simple Uniswap V3 subgraph on Base (via The Graph)
-UNISWAP_SUBGRAPH = "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3-base"
+# DeFiLlama coins price API — aggregates prices across DEXes
+DEFILLAMA_PRICE_URL = "https://coins.llama.fi/prices/current/{coins}"
+
+# Maps asset symbol → CoinGecko ID used by DeFiLlama
+COINGECKO_IDS = {
+    "ETH": "coingecko:ethereum",
+    "BTC": "coingecko:bitcoin",
+    "SOL": "coingecko:solana",
+}
 
 PAIRS = [
     {"base": "ETH", "quote": "USDC"},
+    {"base": "SOL", "quote": "USDC"},
 ]
 
 
@@ -98,7 +106,7 @@ class ArbitrageSource(MarketSource):
     ) -> tuple[Decimal | None, Decimal | None]:
         async with httpx.AsyncClient(timeout=10) as client:
             cex_price = await self._coinbase_price(client, base, quote)
-            dex_price = await self._uniswap_price(client, base, quote)
+            dex_price = await self._defilama_price(client, base)
         return cex_price, dex_price
 
     async def _coinbase_price(
@@ -114,35 +122,19 @@ class ArbitrageSource(MarketSource):
             logger.debug("Coinbase price fetch failed: %s", exc)
             return None
 
-    async def _uniswap_price(
-        self, client: httpx.AsyncClient, base: str, quote: str
+    async def _defilama_price(
+        self, client: httpx.AsyncClient, base: str
     ) -> Decimal | None:
-        """Query Uniswap V3 pool price via The Graph."""
-        query = """
-        {
-          pools(
-            where: {token0_: {symbol: "WETH"}, token1_: {symbol: "USDC"}}
-            orderBy: liquidity
-            orderDirection: desc
-            first: 1
-          ) {
-            token0Price
-            token1Price
-          }
-        }
-        """
+        """Fetch aggregated DEX price from DeFiLlama coins API."""
+        coin_id = COINGECKO_IDS.get(base)
+        if not coin_id:
+            return None
         try:
-            resp = await client.post(
-                UNISWAP_SUBGRAPH,
-                json={"query": query},
-                timeout=10,
-            )
+            url = DEFILLAMA_PRICE_URL.format(coins=coin_id)
+            resp = await client.get(url)
             resp.raise_for_status()
-            pools = resp.json().get("data", {}).get("pools", [])
-            if not pools:
-                return None
-            # token1Price = USDC per WETH
-            return Decimal(str(pools[0]["token1Price"]))
+            price = resp.json()["coins"][coin_id]["price"]
+            return Decimal(str(price))
         except Exception as exc:
-            logger.debug("Uniswap price fetch failed: %s", exc)
+            logger.debug("DeFiLlama price fetch failed for %s: %s", base, exc)
             return None
