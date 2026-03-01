@@ -39,13 +39,15 @@ class StrategyDecision(BaseModel):
 
 # Shared singletons (set up in main.py before graph runs)
 _wallet: Wallet | None = None
+_sol_wallet = None  # SolanaWallet | None
 _treasury: Treasury | None = None
 _scanner: OpportunityScanner | None = None
 
 
-def setup(wallet: Wallet, treasury: Treasury, scanner: OpportunityScanner) -> None:
-    global _wallet, _treasury, _scanner
+def setup(wallet: Wallet, treasury: Treasury, scanner: OpportunityScanner, sol_wallet=None) -> None:
+    global _wallet, _sol_wallet, _treasury, _scanner
     _wallet = wallet
+    _sol_wallet = sol_wallet
     _treasury = treasury
     _scanner = scanner
 

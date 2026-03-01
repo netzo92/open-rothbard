@@ -258,6 +258,70 @@ class SolanaWallet:
             logger.error("USDC transfer failed: %s", exc)
             raise
 
+    async def jupiter_swap(
+        self,
+        input_mint: str,
+        output_mint: str,
+        amount: int,  # in smallest unit (lamports for SOL, micro-USDC for USDC)
+        slippage_bps: int = 50,
+    ) -> tuple[int, str]:
+        """Execute a token swap via Jupiter aggregator.
+
+        Returns (output_amount_raw, tx_signature).
+        Jupiter automatically routes through the best available DEX pools.
+        """
+        if not self.is_connected:
+            raise RuntimeError("Solana wallet not connected")
+
+        import base64
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            # 1. Get best-route quote
+            quote_resp = await client.get(
+                "https://quote-api.jup.ag/v6/quote",
+                params={
+                    "inputMint": input_mint,
+                    "outputMint": output_mint,
+                    "amount": str(amount),
+                    "slippageBps": str(slippage_bps),
+                },
+            )
+            quote_resp.raise_for_status()
+            quote = quote_resp.json()
+
+            # 2. Build swap transaction
+            swap_resp = await client.post(
+                "https://quote-api.jup.ag/v6/swap",
+                json={
+                    "quoteResponse": quote,
+                    "userPublicKey": self.address,
+                    "wrapAndUnwrapSol": True,
+                    "dynamicComputeUnitLimit": True,
+                    "prioritizationFeeLamports": "auto",
+                },
+            )
+            swap_resp.raise_for_status()
+            swap_tx_b64 = swap_resp.json()["swapTransaction"]
+
+        # 3. Deserialize, sign, and submit
+        try:
+            from solders.transaction import VersionedTransaction  # type: ignore[import]
+        except ImportError:
+            raise RuntimeError("solders not installed")
+
+        raw = base64.b64decode(swap_tx_b64)
+        tx = VersionedTransaction.from_bytes(raw)
+        signed = VersionedTransaction(tx.message, [self._keypair])
+        resp = await self._client.send_raw_transaction(
+            bytes(signed),
+            opts={"skipPreflight": False, "preflightCommitment": "confirmed"},
+        )
+        sig = str(resp.value)
+        out_amount = int(quote["outAmount"])
+        logger.info("Jupiter swap %s→%s amount=%s out=%s | sig: %s", input_mint[:8], output_mint[:8], amount, out_amount, sig)
+        return out_amount, sig
+
     async def request_airdrop(self, sol_amount: float = 1.0) -> str:
         """Request devnet SOL airdrop."""
         if "mainnet" in settings.solana_rpc_url:

@@ -24,6 +24,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +54,45 @@ class AuditAction:
     title: str                # one-line human summary
     details: dict[str, Any] = field(default_factory=dict)
     risk: str = "medium"      # "low" | "medium" | "high"
+
+
+# ── pending dashboard approvals ───────────────────────────────────────────────
+
+# Maps approval_id → (AuditAction, asyncio.Future[bool])
+# Populated when running non-interactively; resolved by the dashboard API.
+_pending: dict[str, tuple[AuditAction, asyncio.Future]] = {}
+
+
+def _is_interactive() -> bool:
+    """Return True if stdin is a real TTY (interactive terminal)."""
+    try:
+        return sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def get_pending_approvals() -> list[dict]:
+    """Return serialisable list of pending approvals for the dashboard."""
+    return [
+        {
+            "id": aid,
+            "action_type": action.action_type,
+            "title": action.title,
+            "details": action.details,
+            "risk": action.risk,
+        }
+        for aid, (action, _) in list(_pending.items())
+    ]
+
+
+def resolve_approval(approval_id: str, approved: bool) -> bool:
+    """Resolve a pending dashboard approval. Returns False if ID not found."""
+    if approval_id not in _pending:
+        return False
+    action, future = _pending.pop(approval_id)
+    if not future.done():
+        future.set_result(approved)
+    return True
 
 
 # ── internal helpers ──────────────────────────────────────────────────────────
@@ -118,8 +159,13 @@ def _append_audit_log(action: AuditAction, approved: bool) -> None:
 async def require_approval(action: AuditAction) -> None:
     """Gate a real-world action behind operator approval.
 
-    No-op when AUDIT_MODE is false. Raises AuditDenied if the operator
-    types anything other than 'y' / 'yes'.
+    No-op when AUDIT_MODE is false.  Raises AuditDenied if denied.
+
+    Approval channel (automatic):
+    - Interactive TTY  → terminal stdin prompt (original behaviour)
+    - Non-interactive  → registers action in _pending dict and waits up to
+                         5 minutes for the dashboard operator to click
+                         Approve / Deny at /dashboard.
     """
     if not settings.audit_mode:
         return
@@ -128,13 +174,30 @@ async def require_approval(action: AuditAction) -> None:
     _console.print(_render_panel(action))
     _console.print()
 
-    try:
-        answer = await _async_input("  Approve? [y/N] > ")
-    except (EOFError, KeyboardInterrupt):
-        # Non-interactive environment or Ctrl-C — deny by default
-        answer = "n"
+    if _is_interactive():
+        # ── CLI path ──────────────────────────────────────────────────────────
+        try:
+            answer = await _async_input("  Approve? [y/N] > ")
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        approved = answer.strip().lower() in {"y", "yes"}
+    else:
+        # ── Dashboard path ────────────────────────────────────────────────────
+        approval_id = str(uuid.uuid4())
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        _pending[approval_id] = (action, future)
+        logger.info(
+            "[AUDIT] Waiting for dashboard approval (id=%s): %s",
+            approval_id[:8], action.title,
+        )
+        try:
+            approved = await asyncio.wait_for(future, timeout=300.0)  # 5 min
+        except asyncio.TimeoutError:
+            _pending.pop(approval_id, None)
+            approved = False
+            logger.warning("[AUDIT] Dashboard approval timed out: %s", action.title)
 
-    approved = answer.strip().lower() in {"y", "yes"}
     _append_audit_log(action, approved)
 
     if approved:
