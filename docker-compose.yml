@@ -4,6 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile
     env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
+      - SQLITE_PATH=/data/rothbard.db
     depends_on:
       redis:
         condition: service_healthy

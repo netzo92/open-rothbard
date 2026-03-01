@@ -40,11 +40,14 @@ class Wallet:
             logger.warning("cdp-sdk not installed — wallet running in stub mode")
             return
 
-        # Configure CDP client
-        cdp.Cdp.configure(
-            api_key_name=settings.cdp_api_key_name,
-            private_key=settings.cdp_api_key_private_key,
-        )
+        if not self._configure_cdp(cdp):
+            return
+        if not hasattr(cdp, "Wallet"):
+            logger.warning(
+                "Unsupported cdp module (%s): missing Wallet type; wallet running in stub mode",
+                getattr(cdp, "__file__", "unknown module"),
+            )
+            return
 
         wallet_path = settings.wallet_path
         if wallet_path.exists():
@@ -56,15 +59,49 @@ class Wallet:
             self._save(wallet_path)
             logger.info("Wallet created: %s", self.address)
 
+    def _configure_cdp(self, cdp_module) -> bool:
+        """Support multiple cdp-sdk API surfaces without crashing startup."""
+        key_name = settings.cdp_api_key_name
+        private_key = settings.cdp_api_key_private_key
+        try:
+            if hasattr(cdp_module, "Cdp") and hasattr(cdp_module.Cdp, "configure"):
+                cdp_module.Cdp.configure(
+                    api_key_name=key_name,
+                    private_key=private_key,
+                )
+                return True
+            if hasattr(cdp_module, "configure"):
+                cdp_module.configure(
+                    api_key_name=key_name,
+                    private_key=private_key,
+                )
+                return True
+
+            logger.warning(
+                "Unsupported cdp module (%s): no configure API; wallet running in stub mode",
+                getattr(cdp_module, "__file__", "unknown module"),
+            )
+            return False
+        except Exception as exc:
+            logger.error("Failed to configure CDP SDK: %s", exc)
+            return False
+
     def _save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self._wallet.export_data().model_dump()))
+        exported = self._wallet.export_data()
+        if hasattr(exported, "model_dump"):
+            exported = exported.model_dump()
+        elif hasattr(exported, "dict"):
+            exported = exported.dict()
+        path.write_text(json.dumps(exported))
         path.chmod(0o600)
 
     def _load(self, path: Path):
         import cdp  # type: ignore[import]
         data = json.loads(path.read_text())
-        return cdp.Wallet.import_data(cdp.WalletData(**data))
+        if hasattr(cdp, "WalletData"):
+            return cdp.Wallet.import_data(cdp.WalletData(**data))
+        return cdp.Wallet.import_data(data)
 
     # ── queries ───────────────────────────────────────────────────────────────
 
